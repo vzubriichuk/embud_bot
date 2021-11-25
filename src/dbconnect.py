@@ -51,9 +51,20 @@ class Connection(object):
         result = self.cursor.fetchall()
         return result
 
+    def get_objects(self):
+        query = '''
+            SELECT ID, Name 
+            FROM mebelxl_embud.objects
+            WHERE Active = 1
+        '''
+        self.cursor.execute(query)
+        result = self.cursor.fetchall()
+        return result
+
     def add_new_user(self, idtg, firstname, lastname):
         query = '''
-            INSERT INTO mebelxl_embud.users (ID, FirstName, LastName) VALUES (%s, %s, %s)
+            INSERT INTO mebelxl_embud.users (ID, FirstName, LastName) 
+            VALUES (%s, %s, %s)
         '''
         self.cursor.execute(query, (idtg, firstname, lastname))
         self.db.commit()
