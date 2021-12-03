@@ -14,6 +14,8 @@ import log_error as writelog
 from telebot import types
 from dataclasses import dataclass
 from configparser import ConfigParser
+from shutil import copy, copy2
+from pathlib import Path
 
 
 def read_tg_config(filename='config.ini', section='telegram'):
@@ -134,20 +136,24 @@ def send_text(message):
         menu = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
         menu.row(icon_home + '  ' + 'Главное меню')
         bot.send_message(message.from_user.id, "Прикрепите 1 файл", reply_markup=menu)
-        bot.register_next_step_handler(message, get_filename)
+        bot.register_next_step_handler(message, get_file)
     elif data.startswith(icon_file_y) and user.count_files > 0:
         menu = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
         menu.row(icon_home + '  ' + 'Главное меню')
         bot.send_message(message.from_user.id, "Прикрепите еще 1 файл", reply_markup=menu)
-        bot.register_next_step_handler(message, get_filename)
+        bot.register_next_step_handler(message, get_file)
     elif data.startswith(icon_file_n):
         final_menu = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
         final_menu.row(icon_send_order + '  ' + 'Отправить заявку')
         final_menu.row(icon_home + '  ' + 'Главное меню')
+        if user.count_files > 0:
+            bot.send_message(message.from_user.id, "Файл(-ы) прикреплены.  " 
+                                                   "Подтвердите отправку заявки.",
+                             reply_markup=final_menu)
+        else:
+            bot.send_message(message.from_user.id, "Подтвердите отправку заявки.",
+                             reply_markup=final_menu)
 
-        bot.send_message(message.from_user.id, "Файл(-ы) прикреплены.  " 
-                                               "Подтвердите отправку заявки.",
-                         reply_markup=final_menu)
         bot.register_next_step_handler(message, approve_order)
     elif data.startswith(icon_check):
         bot.send_message(message.from_user.id, "Данная функция в разработке.")
@@ -188,18 +194,55 @@ def get_comment(message):
     menu_file_yn.row(icon_home + '  ' + 'Главное меню')
     bot.send_message(message.chat.id, 'Хотите ли вы добавить файл к заявке?', reply_markup=menu_file_yn)
 
-def get_filename(message):
+
+from ftplib import FTP
+import os
+import io
+
+
+
+
+
+
+
+def get_file(message):
+    if message.content_type == 'document':
+        download_document(message)
+    elif message.content_type == 'photo':
+        bot.send_message(message.chat.id,
+                         'Отправлять можно файлы документов.'
+                         ' Функция отправки фото в разработке.',)
+
+
+def download_document(message):
+    ftp = FTP()
+    # ftp.set_debuglevel(2)
+    ftp.connect('mebelxl.ftp.tools', 21)
+    ftp.login('mebelxl_ftp', 'Embudbot1')
+    ftp.dir()
+
     filename = message.document.file_name
-    if filename:
-        user.list_files.append(filename)
-        user.count_files += 1
-        menu_file_yn = types.ReplyKeyboardMarkup(row_width=1,
-                                                 resize_keyboard=True)
-        menu_file_yn.row(icon_file_y + '  ' + 'Да', icon_file_n + '  ' + 'Нет')
-        menu_file_yn.row(icon_home + '  ' + 'Главное меню')
-        bot.send_message(message.from_user.id, 'Хотите добавить еще файл?', reply_markup=menu_file_yn)
-        print(user.count_files)
-        print(user.list_files)
+    file_info = bot.get_file(message.document.file_id)
+    downloaded_file = bot.download_file(file_info.file_path)
+    bio = io.BytesIO(downloaded_file)
+    ftp.storbinary(f'STOR {filename}', bio)
+    add_more_files(filename)
+
+def download_photo(message):
+    photo_info = bot.get_file(message.photo[-1].file_id)
+    print(photo_info.file_id)
+    # bot.send_photo(message.chat.id, photo_info.file_id)
+    src = 'C:/Dell/' + photo_info.file_path
+    with open(src, 'wb') as new_file:
+        # записываем данные в файл
+        new_file.write(photo_info.file_id)
+
+def add_more_files(filename):
+    user.list_files.append(filename)
+    user.count_files += 1
+    menu_file_yn = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+    menu_file_yn.row(icon_file_y + '  ' + 'Да', icon_file_n + '  ' + 'Нет')
+    menu_file_yn.row(icon_home + '  ' + 'Главное меню')
 
 
 def approve_order(message):
