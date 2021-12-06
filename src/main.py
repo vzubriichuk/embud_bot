@@ -320,7 +320,7 @@ def makeKeyboard(value, id):
 # @bot.message_handler(func=lambda message: message.text.lower() == "Создайте")
 # def cart(message):
 #     bot.send_message(message.chat.id, "Все доступные товары: ", reply_markup=keyboard1)
-#
+
 
 
 if __name__ == '__main__':
