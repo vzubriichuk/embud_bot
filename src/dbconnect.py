@@ -70,6 +70,24 @@ class Connection(object):
         self.db.commit()
         return 1
 
+    def create_order(self, uid, object_id, comment):
+        query = '''
+            INSERT INTO mebelxl_embud.orders (UserID, ObjectID, Comment)
+            VALUES (%s, %s, %s)
+        '''
+        self.cursor.execute(query, (uid, object_id, comment))
+        lastrowid = self.cursor.lastrowid
+        self.db.commit()
+        return lastrowid
+
+    def create_files(self, file):
+        query = '''
+            INSERT INTO mebelxl_embud.files (OrderID, FileName)
+            VALUES(LAST_INSERT_ID(), %s)
+        '''
+        self.cursor.execute(query, (file))
+        self.db.commit()
+        return 1
 
 
 if __name__ == '__main__':

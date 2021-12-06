@@ -5,13 +5,15 @@ Author : Vitaliy Zubriichuk
 Contact : v@zubr.kiev.ua
 Time    : 15.11.2021 19:29
 """
-from gc import get_objects
 
 import ast
 import telebot
 import dbconnect as db
 import log_error as writelog
+import os
+import io
 from telebot import types
+from ftplib import FTP
 from dataclasses import dataclass
 from configparser import ConfigParser
 from shutil import copy, copy2
@@ -58,8 +60,10 @@ class User:
     count_files: int = 0
     comment: str = None
 
+
 user = User()
 user.list_files = []
+
 
 def convert_to_list(users):
     """ return list ids of all telegram's users from tuple to int """
@@ -73,15 +77,14 @@ def convert_to_list(users):
     return list
 
 
-with db.Connection(config) as conn:
+with db.Connection(config) as sql:
     # получаем список пользователей сервиса
-    ids = conn.load_users('SELECT ID FROM mebelxl_embud.users')
+    ids = sql.load_users('SELECT ID FROM mebelxl_embud.users')
     user_list = convert_to_list(ids)
     # выгружаем список активных обьектов
-    object_list = dict(conn.get_objects())
+    object_list = dict(sql.get_objects())
 
 print(user_list)
-
 
 icon_register = '👤'
 icon_create = '🔥'
@@ -96,13 +99,13 @@ icon_send_order = '🚀'
 @bot.message_handler(commands=['start'])
 def start_message(message):
     if message.from_user.id not in user_list:
-        keyboard = types.ReplyKeyboardMarkup(row_width=1,
-                                             resize_keyboard=True,
-                                             one_time_keyboard=True)
-        keyboard.row(icon_register + '  ' + 'Регистрация')
+        register_keyboard = types.ReplyKeyboardMarkup(row_width=1,
+                                                      resize_keyboard=True,
+                                                      one_time_keyboard=True)
+        register_keyboard.row(icon_register + '  ' + 'Регистрация')
         bot.send_message(message.from_user.id,
                          'Привет, идентифицируйте себя, нажав кнопку "Регистрация"',
-                         reply_markup=keyboard)
+                         reply_markup=register_keyboard)
     else:
         menu_keyboard(message)
 
@@ -124,34 +127,44 @@ def send_text(message):
         bot.register_next_step_handler(message, get_name)
     elif data.startswith(icon_create):
         markup = types.ReplyKeyboardMarkup(row_width=1)
+
         for key, value in object_list.items():
             markup.row(icon_object + '  ' + value)
         markup.row(icon_home + '  ' + 'Главное меню')
         bot.send_message(message.from_user.id, "Выберите объект из списка ",
                          reply_markup=markup)
     elif data.startswith(icon_object):
-        user.object_name = data
+        user.uid = message.from_user.id  # set user id
+        user.object_name = data[3:]  # get object name
+
+        for key, value in object_list.items():
+            if value == user.object_name:
+                user.object_id = key  # get object id
         post_comment(message)
     elif data.startswith(icon_file_y) and user.count_files == 0:
         menu = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
         menu.row(icon_home + '  ' + 'Главное меню')
-        bot.send_message(message.from_user.id, "Прикрепите 1 файл", reply_markup=menu)
+        bot.send_message(message.from_user.id, "Прикрепите 1 файл",
+                         reply_markup=menu)
         bot.register_next_step_handler(message, get_file)
     elif data.startswith(icon_file_y) and user.count_files > 0:
         menu = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
         menu.row(icon_home + '  ' + 'Главное меню')
-        bot.send_message(message.from_user.id, "Прикрепите еще 1 файл", reply_markup=menu)
+        bot.send_message(message.from_user.id, "Прикрепите еще 1 файл",
+                         reply_markup=menu)
         bot.register_next_step_handler(message, get_file)
     elif data.startswith(icon_file_n):
-        final_menu = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+        final_menu = types.ReplyKeyboardMarkup(row_width=1,
+                                               resize_keyboard=True)
         final_menu.row(icon_send_order + '  ' + 'Отправить заявку')
         final_menu.row(icon_home + '  ' + 'Главное меню')
         if user.count_files > 0:
-            bot.send_message(message.from_user.id, "Файл(-ы) прикреплены.  " 
+            bot.send_message(message.from_user.id, "Файл(-ы) прикреплены.  "
                                                    "Подтвердите отправку заявки.",
                              reply_markup=final_menu)
         else:
-            bot.send_message(message.from_user.id, "Подтвердите отправку заявки.",
+            bot.send_message(message.from_user.id,
+                             "Подтвердите отправку заявки.",
                              reply_markup=final_menu)
 
         bot.register_next_step_handler(message, approve_order)
@@ -160,6 +173,13 @@ def send_text(message):
     elif data.startswith(icon_home):
         menu_keyboard(message)
 
+
+def ask_menu_files(message):
+    menu_file_yn = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+    menu_file_yn.row(icon_file_y + '  ' + 'Да', icon_file_n + '  ' + 'Нет')
+    menu_file_yn.row(icon_home + '  ' + 'Главное меню')
+    bot.send_message(message.chat.id, 'Хотите ли вы добавить файл к заявке?',
+                     reply_markup=menu_file_yn)
 
 
 """
@@ -172,6 +192,7 @@ def get_name(message):
     bot.send_message(message.from_user.id, 'Ваша фамилия?')
     bot.register_next_step_handler(message, get_surname)
 
+
 def get_surname(message):
     user.surname = message.text
 
@@ -181,29 +202,24 @@ def get_surname(message):
             bot.send_message(message.chat.id, '',
                              reply_markup=menu_keyboard(message))
 
+
 def post_comment(message):
     menu = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
     menu.row(icon_home + '  ' + 'Главное меню')
-    bot.send_message(message.from_user.id, 'Напишите список необходимых материалов одним сообщением', reply_markup=menu)
+    bot.send_message(message.from_user.id,
+                     'Напишите список необходимых материалов одним сообщением',
+                     reply_markup=menu)
     bot.register_next_step_handler(message, get_comment)
+
 
 def get_comment(message):
     user.comment = message.text
-    menu_file_yn = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-    menu_file_yn.row(icon_file_y + '  ' + 'Да', icon_file_n + '  ' + 'Нет')
-    menu_file_yn.row(icon_home + '  ' + 'Главное меню')
-    bot.send_message(message.chat.id, 'Хотите ли вы добавить файл к заявке?', reply_markup=menu_file_yn)
+    ask_menu_files(message)
 
 
-from ftplib import FTP
-import os
-import io
-
-
-
-
-
-
+"""
+Download files functions
+"""
 
 def get_file(message):
     if message.content_type == 'document':
@@ -211,7 +227,8 @@ def get_file(message):
     elif message.content_type == 'photo':
         bot.send_message(message.chat.id,
                          'Отправлять можно файлы документов.'
-                         ' Функция отправки фото в разработке.',)
+                         ' Функция отправки фото в разработке.', )
+        ask_menu_files(message)
 
 
 def download_document(message):
@@ -219,14 +236,17 @@ def download_document(message):
     # ftp.set_debuglevel(2)
     ftp.connect('mebelxl.ftp.tools', 21)
     ftp.login('mebelxl_ftp', 'Embudbot1')
-    ftp.dir()
+    # ftp.dir()
 
     filename = message.document.file_name
     file_info = bot.get_file(message.document.file_id)
     downloaded_file = bot.download_file(file_info.file_path)
     bio = io.BytesIO(downloaded_file)
     ftp.storbinary(f'STOR {filename}', bio)
-    add_more_files(filename)
+
+    add_filename_to_list(filename)
+    ask_menu_files(message)
+
 
 def download_photo(message):
     photo_info = bot.get_file(message.photo[-1].file_id)
@@ -237,25 +257,30 @@ def download_photo(message):
         # записываем данные в файл
         new_file.write(photo_info.file_id)
 
-def add_more_files(filename):
+
+def add_filename_to_list(filename):
     user.list_files.append(filename)
     user.count_files += 1
-    menu_file_yn = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-    menu_file_yn.row(icon_file_y + '  ' + 'Да', icon_file_n + '  ' + 'Нет')
-    menu_file_yn.row(icon_home + '  ' + 'Главное меню')
 
 
 def approve_order(message):
+    # ok, saving data to db
+    print(user.comment,
+          user.list_files,
+          user.uid,
+          user.object_id,
+          user.object_name)
+
+    with db.Connection(config) as sql:
+        # получаем список пользователей сервиса
+        print(user.uid, user.object_id, user.comment, user.list_files)
+        order_id = sql.create_order(user.uid, user.object_id, user.comment)
+        sql.create_files(order_id)
+
+
+    # say it's all right
     bot.send_message(message.from_user.id, 'Заявка отправлена')
-    # all right, go to main keyboard menu
     menu_keyboard(message)
-
-
-
-
-
-
-
 
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -273,13 +298,14 @@ def handle_query(call):
                               #                           keyFromCallBack),
                               parse_mode='HTML')
 
+
 def makeKeyboard(value, id):
     user.object_id = id
     print(f'ID объекта: {user.object_id}')
 
-
-
     #
+
+
 # @bot.message_handler(content_types=['text'])
 # def send_text(message):
 #     if message.text.lower() == 'создать заявку':
