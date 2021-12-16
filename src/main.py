@@ -303,7 +303,7 @@ def makeKeyboard(value, id):
     user.object_id = id
     print(f'ID объекта: {user.object_id}')
 
-    #
+
 
 
 # @bot.message_handler(content_types=['text'])
